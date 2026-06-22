@@ -1,13 +1,131 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+from database import conn, cursor
+
 TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
+ADMIN_ID = 8947941966
 
+
+def is_admin(update: Update):
+    return update.effective_user.id == ADMIN_ID
+
+
+# ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-await update.message.reply_text("سلام")
+    user = update.message.from_user
 
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, name) VALUES (?, ?)",
+        (user.id, user.first_name)
+    )
+
+    conn.commit()
+
+    await update.message.reply_text(
+        "سلام 👋 به ربات انجمن علمی رادیولوژی خوش اومدی"
+    )
+
+
+# ---------------- EVENTS ----------------
+async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cursor.execute("SELECT * FROM events")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await update.message.reply_text("📭 فعلاً رویدادی وجود ندارد")
+        return
+
+    text = "📅 لیست رویدادها:\n\n"
+
+    for row in rows:
+        text += (
+            f"🎓 {row[1]}\n"
+            f"📆 {row[2]}\n"
+            f"👥 ظرفیت: {row[3]}\n\n"
+        )
+
+    await update.message.reply_text(text)
+
+
+# ---------------- ADMIN PANEL ----------------
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔ دسترسی ندارید")
+        return
+
+    text = (
+        "🛠 پنل مدیریت انجمن علمی\n\n"
+        "📅 /events\n"
+        "مشاهده رویدادها\n\n"
+        "👥 /users\n"
+        "مشاهده کاربران\n\n"
+        "💬 /view_suggestions\n"
+        "مشاهده پیشنهادات\n\n"
+        "🚧 امکانات در حال توسعه\n\n"
+        "➕ افزودن رویداد\n"
+        "✏️ ویرایش رویداد\n"
+        "🗑 حذف رویداد\n"
+        "📚 مدیریت جزوات\n"
+        "🧪 مدیریت آزمون‌ها\n"
+    )
+
+    await update.message.reply_text(text)
+
+
+# ---------------- USERS ----------------
+async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔ دسترسی ندارید")
+        return
+
+    cursor.execute("SELECT * FROM users")
+    rows = cursor.fetchall()
+
+    text = f"👥 تعداد کاربران: {len(rows)}\n\n"
+
+    for row in rows:
+        text += f"{row[0]} - {row[1]}\n"
+
+    await update.message.reply_text(text[:4000])
+
+
+# ---------------- SUGGESTIONS ----------------
+async def view_suggestions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔ دسترسی ندارید")
+        return
+
+    try:
+        cursor.execute("SELECT * FROM suggestions")
+        rows = cursor.fetchall()
+
+        if not rows:
+            await update.message.reply_text("📭 پیشنهادی ثبت نشده")
+            return
+
+        text = "💬 پیشنهادات کاربران:\n\n"
+
+        for row in rows:
+            text += f"{row[2]}\n\n"
+
+        await update.message.reply_text(text[:4000])
+
+    except Exception:
+        await update.message.reply_text(
+            "⚠️ جدول suggestions هنوز ساخته نشده است"
+        )
+
+
+# ---------------- APP ----------------
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("events", events))
+app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CommandHandler("users", users))
+app.add_handler(CommandHandler("view_suggestions", view_suggestions))
+
+print("Bot is running...")
 
 app.run_polling()

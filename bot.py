@@ -1,6 +1,6 @@
 from telegram import Update from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from database import conn, cursor
-TOKEN = "YOUR_TOKEN"
+TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
 ADMIN_ID = 8947941966
 def is_admin(update): return update.effective_user.id == ADMIN_ID
 ---------------- START ----------------

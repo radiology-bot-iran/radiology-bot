@@ -1,12 +1,43 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
-from database import conn, cursor
+import sqlite3
 
-TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
+# ---------------- DATABASE ----------------
+conn = sqlite3.connect("bot.db", check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    name TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    date TEXT,
+    capacity INTEGER
+)
+""")
+
+conn.commit()
+
+# ---------------- CONFIG ----------------
+TOKEN = "YOUR_TOKEN"
 ADMIN_ID = 8947941966
 
+admin_states = {}  # مرحله‌ای کردن ثبت رویداد
 
+# ---------------- CHECK ADMIN ----------------
 def is_admin(update: Update):
     return update.effective_user.id == ADMIN_ID
 
@@ -19,7 +50,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "INSERT OR IGNORE INTO users (user_id, name) VALUES (?, ?)",
         (user.id, user.first_name)
     )
-
     conn.commit()
 
     await update.message.reply_text(
@@ -27,7 +57,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ---------------- EVENTS ----------------
+# ---------------- ADD EVENT FLOW ----------------
+async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔ دسترسی ندارید")
+        return
+
+    admin_states[update.effective_user.id] = {"step": "title"}
+
+    await update.message.reply_text("عنوان رویداد را ارسال کن:")
+
+
+# ---------------- TEXT HANDLER (FLOW) ----------------
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id not in admin_states:
+        return
+
+    state = admin_states[user_id]
+
+    # مرحله 1: عنوان
+    if state["step"] == "title":
+        state["title"] = update.message.text
+        state["step"] = "date"
+
+        await update.message.reply_text("تاریخ رویداد را ارسال کن (مثلاً 2026-07-10):")
+        return
+
+    # مرحله 2: تاریخ
+    if state["step"] == "date":
+        state["date"] = update.message.text
+        state["step"] = "capacity"
+
+        await update.message.reply_text("ظرفیت را ارسال کن:")
+        return
+
+    # مرحله 3: ظرفیت
+    if state["step"] == "capacity":
+        try:
+            capacity = int(update.message.text)
+
+            cursor.execute(
+                "INSERT INTO events (title, date, capacity) VALUES (?, ?, ?)",
+                (state["title"], state["date"], capacity)
+            )
+            conn.commit()
+
+            await update.message.reply_text("✅ رویداد با موفقیت ثبت شد")
+
+        except ValueError:
+            await update.message.reply_text("❌ ظرفیت باید عدد باشد")
+
+        admin_states.pop(user_id, None)
+
+
+# ---------------- SHOW EVENTS ----------------
 async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events")
     rows = cursor.fetchall()
@@ -38,83 +123,10 @@ async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "📅 لیست رویدادها:\n\n"
 
-    for row in rows:
-        text += (
-            f"🎓 {row[1]}\n"
-            f"📆 {row[2]}\n"
-            f"👥 ظرفیت: {row[3]}\n\n"
-        )
+    for r in rows:
+        text += f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n\n"
 
     await update.message.reply_text(text)
-
-
-# ---------------- ADMIN PANEL ----------------
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔ دسترسی ندارید")
-        return
-
-    text = (
-        "🛠 پنل مدیریت انجمن علمی\n\n"
-        "📅 /events\n"
-        "مشاهده رویدادها\n\n"
-        "👥 /users\n"
-        "مشاهده کاربران\n\n"
-        "💬 /view_suggestions\n"
-        "مشاهده پیشنهادات\n\n"
-        "🚧 امکانات در حال توسعه\n\n"
-        "➕ افزودن رویداد\n"
-        "✏️ ویرایش رویداد\n"
-        "🗑 حذف رویداد\n"
-        "📚 مدیریت جزوات\n"
-        "🧪 مدیریت آزمون‌ها\n"
-    )
-
-    await update.message.reply_text(text)
-
-
-# ---------------- USERS ----------------
-async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔ دسترسی ندارید")
-        return
-
-    cursor.execute("SELECT * FROM users")
-    rows = cursor.fetchall()
-
-    text = f"👥 تعداد کاربران: {len(rows)}\n\n"
-
-    for row in rows:
-        text += f"{row[0]} - {row[1]}\n"
-
-    await update.message.reply_text(text[:4000])
-
-
-# ---------------- SUGGESTIONS ----------------
-async def view_suggestions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔ دسترسی ندارید")
-        return
-
-    try:
-        cursor.execute("SELECT * FROM suggestions")
-        rows = cursor.fetchall()
-
-        if not rows:
-            await update.message.reply_text("📭 پیشنهادی ثبت نشده")
-            return
-
-        text = "💬 پیشنهادات کاربران:\n\n"
-
-        for row in rows:
-            text += f"{row[2]}\n\n"
-
-        await update.message.reply_text(text[:4000])
-
-    except Exception:
-        await update.message.reply_text(
-            "⚠️ جدول suggestions هنوز ساخته نشده است"
-        )
 
 
 # ---------------- APP ----------------
@@ -122,10 +134,8 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("events", events))
-app.add_handler(CommandHandler("admin", admin))
-app.add_handler(CommandHandler("users", users))
-app.add_handler(CommandHandler("view_suggestions", view_suggestions))
+app.add_handler(CommandHandler("add_event", add_event))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
 print("Bot is running...")
-
 app.run_polling()

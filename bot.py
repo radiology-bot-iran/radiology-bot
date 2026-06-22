@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS events (
 conn.commit()
 
 # ---------------- CONFIG ----------------
-TOKEN = "YOUR_TOKEN"
+TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
 ADMIN_ID = 8947941966
 
 admin_states = {}  # مرحله‌ای کردن ثبت رویداد

@@ -1,4 +1,4 @@
-ffrom telegram import Update
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from database import conn, cursor   # 👈 این باید بالا باشه
 

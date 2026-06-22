@@ -1,8 +1,9 @@
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters
 )
@@ -29,17 +30,25 @@ CREATE TABLE IF NOT EXISTS events (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS registrations (
+    user_id INTEGER,
+    event_id INTEGER
+)
+""")
+
 conn.commit()
 
 # ---------------- CONFIG ----------------
 TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
 ADMIN_ID = 8947941966
 
-admin_states = {}  # مرحله‌ای کردن ثبت رویداد
+admin_state = {}
+edit_state = {}
 
-# ---------------- CHECK ADMIN ----------------
-def is_admin(update: Update):
-    return update.effective_user.id == ADMIN_ID
+# ---------------- ADMIN CHECK ----------------
+def is_admin(user_id: int):
+    return user_id == ADMIN_ID
 
 
 # ---------------- START ----------------
@@ -57,62 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ---------------- ADD EVENT FLOW ----------------
-async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔ دسترسی ندارید")
-        return
-
-    admin_states[update.effective_user.id] = {"step": "title"}
-
-    await update.message.reply_text("عنوان رویداد را ارسال کن:")
-
-
-# ---------------- TEXT HANDLER (FLOW) ----------------
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id not in admin_states:
-        return
-
-    state = admin_states[user_id]
-
-    # مرحله 1: عنوان
-    if state["step"] == "title":
-        state["title"] = update.message.text
-        state["step"] = "date"
-
-        await update.message.reply_text("تاریخ رویداد را ارسال کن (مثلاً 2026-07-10):")
-        return
-
-    # مرحله 2: تاریخ
-    if state["step"] == "date":
-        state["date"] = update.message.text
-        state["step"] = "capacity"
-
-        await update.message.reply_text("ظرفیت را ارسال کن:")
-        return
-
-    # مرحله 3: ظرفیت
-    if state["step"] == "capacity":
-        try:
-            capacity = int(update.message.text)
-
-            cursor.execute(
-                "INSERT INTO events (title, date, capacity) VALUES (?, ?, ?)",
-                (state["title"], state["date"], capacity)
-            )
-            conn.commit()
-
-            await update.message.reply_text("✅ رویداد با موفقیت ثبت شد")
-
-        except ValueError:
-            await update.message.reply_text("❌ ظرفیت باید عدد باشد")
-
-        admin_states.pop(user_id, None)
-
-
-# ---------------- SHOW EVENTS ----------------
+# ---------------- EVENTS ----------------
 async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT * FROM events")
     rows = cursor.fetchall()
@@ -121,21 +75,78 @@ async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 فعلاً رویدادی وجود ندارد")
         return
 
-    text = "📅 لیست رویدادها:\n\n"
-
     for r in rows:
-        text += f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n\n"
+        event_id = r[0]
 
-    await update.message.reply_text(text)
+        cursor.execute(
+            "SELECT COUNT(*) FROM registrations WHERE event_id=?",
+            (event_id,)
+        )
+        count = cursor.fetchone()[0]
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🟢 ثبت‌نام", callback_data=f"reg_{event_id}"),
+                InlineKeyboardButton("👥 شرکت‌کنندگان", callback_data=f"list_{event_id}")
+            ]
+        ]
+
+        if is_admin(update.effective_user.id):
+            keyboard.append([
+                InlineKeyboardButton("✏️ ویرایش", callback_data=f"edit_{event_id}"),
+                InlineKeyboardButton("🗑 حذف", callback_data=f"del_{event_id}")
+            ])
+
+        await update.message.reply_text(
+            f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n👤 ثبت‌نام شده: {count}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
-# ---------------- APP ----------------
-app = ApplicationBuilder().token(TOKEN).build()
+# ---------------- CALLBACKS ----------------
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("events", events))
-app.add_handler(CommandHandler("add_event", add_event))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    data = query.data
+    user_id = query.from_user.id
 
-print("Bot is running...")
-app.run_polling()
+    # ---------------- REGISTER ----------------
+    if data.startswith("reg_"):
+        event_id = int(data.split("_")[1])
+
+        cursor.execute(
+            "SELECT * FROM registrations WHERE user_id=? AND event_id=?",
+            (user_id, event_id)
+        )
+        if cursor.fetchone():
+            await query.answer("قبلاً ثبت‌نام کردی ❗", show_alert=True)
+            return
+
+        cursor.execute("SELECT capacity FROM events WHERE id=?", (event_id,))
+        cap_row = cursor.fetchone()
+        if not cap_row:
+            return
+        cap = cap_row[0]
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM registrations WHERE event_id=?",
+            (event_id,)
+        )
+        count = cursor.fetchone()[0]
+
+        if count >= cap:
+            await query.answer("ظرفیت تکمیل است ❌", show_alert=True)
+            return
+
+        cursor.execute(
+            "INSERT INTO registrations (user_id, event_id) VALUES (?, ?)",
+            (user_id, event_id)
+        )
+        conn.commit()
+
+        await query.answer("ثبت شد ✅", show_alert=True)
+
+    # ---------------- LIST ----------------
+    elif data.startswith("list_"):
+        event_id = int(data.split("_")[1])

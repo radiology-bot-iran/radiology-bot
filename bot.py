@@ -1,6 +1,4 @@
 import sqlite3
-import asyncio
-import time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -12,207 +10,178 @@ from telegram.ext import (
     filters
 )
 
+# ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 
+def init_db():
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        student_id TEXT,
+        name TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        date TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS quizzes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        q TEXT,
+        a TEXT,
+        b TEXT,
+        c TEXT,
+        ans TEXT
+    )
+    """)
+
+    conn.commit()
+
+# ================= CONFIG =================
 TOKEN = "8723545702:AAGF2-dS6_WXIxXJjf83bjkNI2HSV_TbP88"
 ADMIN_ID = 8947941966
 
 state = {}
 quiz_cache = {}
-answered = set()
-admin_buffer = {}
 
-# ---------------- SETTINGS ENGINE ----------------
-def get_setting(key, default="30"):
-    cur.execute("SELECT value FROM settings WHERE key=?", (key,))
-    r = cur.fetchone()
-    return r[0] if r else default
+# ================= SEED =================
+def seed():
+    cur.execute("SELECT COUNT(*) FROM events")
+    if cur.fetchone()[0] == 0:
+        cur.execute("INSERT INTO events (title,date) VALUES (?,?)",
+                    ("📅 سمینار MRI", "1404/06/03"))
 
-def set_setting(key, value):
-    cur.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, str(value)))
+    cur.execute("SELECT COUNT(*) FROM quizzes")
+    if cur.fetchone()[0] == 0:
+        cur.execute("""
+        INSERT INTO quizzes (q,a,b,c,ans) VALUES
+        ('MRI چیست؟','اشعه X','میدان مغناطیسی','اولتراسوند','B'),
+        ('MRI برای چیست؟','استخوان','بافت نرم','ریه','B'),
+        ('کنتراست MRI چیست؟','گادولینیوم','ید','آب','A')
+        """)
+
     conn.commit()
 
-# ---------------- MENU ----------------
-def menu(uid):
-    kb = [
-        [InlineKeyboardButton("📝 آزمون", callback_data="quiz")],
-        [InlineKeyboardButton("📩 درخواست", callback_data="req")],
-        [InlineKeyboardButton("📅 رویداد", callback_data="event")],
-        [InlineKeyboardButton("🏆 رتبه", callback_data="rank")]
-    ]
+# ================= MENU =================
+def menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 رویدادها", callback_data="events")],
+        [InlineKeyboardButton("🧪 آزمون MRI", callback_data="quiz")]
+    ])
 
-    if uid == ADMIN_ID:
-        kb.append([InlineKeyboardButton("🛠 پنل مدیریت", callback_data="admin")])
-
-    return InlineKeyboardMarkup(kb)
-
-# ---------------- START ----------------
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
+    uid = update.effective_user.id
 
-    cur.execute("SELECT * FROM users WHERE user_id=?", (u.id,))
-    if cur.fetchone():
-        await update.message.reply_text("🏠 منو", reply_markup=menu(u.id))
+    cur.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    if not cur.fetchone():
+        state[uid] = "reg"
+        await update.message.reply_text("🎓 کد دانشجویی را وارد کنید:")
         return
 
-    state[u.id] = "register"
-    await update.message.reply_text("🎓 شماره دانشجویی را وارد کنید:")
+    await update.message.reply_text("🏠 منو", reply_markup=menu())
 
-# ---------------- QUIZ ENGINE ----------------
-async def run_quiz(uid, msg, context):
-    cur.execute("SELECT * FROM quizzes ORDER BY RANDOM() LIMIT 1")
-    q = cur.fetchone()
-
-    if not q:
-        await msg.reply_text("❌ آزمون وجود ندارد")
-        return
-
-    quiz_cache[uid] = q
-
-    time_limit = int(get_setting("quiz_time", 30))
-
-    kb = [[
-        InlineKeyboardButton("A", callback_data="A"),
-        InlineKeyboardButton("B", callback_data="B"),
-        InlineKeyboardButton("C", callback_data="C")
-    ]]
-
-    await msg.reply_text(
-        f"""📝 {q[1]}
-
-A) {q[2]}
-B) {q[3]}
-C) {q[4]}
-
-⏱ زمان: {time_limit} ثانیه""",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-    await asyncio.sleep(time_limit)
-
-    if uid in quiz_cache and uid not in answered:
-        quiz_cache.pop(uid, None)
-        await msg.reply_text("⛔ زمان آزمون تمام شد")
-
-# ---------------- TEXT HANDLER ----------------
+# ================= TEXT =================
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     txt = update.message.text
 
     # REGISTER
-    if uid in state and state[uid] == "register":
-        cur.execute("INSERT INTO users VALUES (?,?,?)", (uid, txt, update.effective_user.first_name))
+    if state.get(uid) == "reg":
+        cur.execute("INSERT INTO users VALUES (?,?,?)",
+                    (uid, txt, update.effective_user.first_name))
         conn.commit()
         state.pop(uid)
-        await update.message.reply_text("✅ ثبت شد", reply_markup=menu(uid))
+
+        await update.message.reply_text("✅ ثبت شد", reply_markup=menu())
         return
 
-    # ADMIN SET TIME
-    if uid in state and state[uid] == "set_time":
-        set_setting("quiz_time", txt)
-        state.pop(uid)
-        await update.message.reply_text("⏱ زمان آپدیت شد")
-        return
-
-    # ADMIN REPLY
-    if uid in admin_buffer:
-        req_id = admin_buffer[uid]
-
-        cur.execute("SELECT user_id FROM requests WHERE id=?", (req_id,))
-        t = cur.fetchone()
-
-        if t:
-            await context.bot.send_message(t[0], f"📬 پاسخ:\n{txt}")
-
-        cur.execute("UPDATE requests SET status='done' WHERE id=?", (req_id,))
-        conn.commit()
-
-        admin_buffer.pop(uid)
-        await update.message.reply_text("✅ ارسال شد")
-
-# ---------------- CALLBACK ----------------
+# ================= CALLBACK =================
 async def cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
     uid = q.from_user.id
-    d = q.data
+    data = q.data
 
-    # QUIZ
-    if d == "quiz":
-        await run_quiz(uid, q.message, context)
+    # -------- EVENTS --------
+    if data == "events":
+        cur.execute("SELECT * FROM events")
+        rows = cur.fetchall()
+
+        if not rows:
+            await q.message.reply_text("📭 رویدادی نیست")
+            return
+
+        msg = "📅 رویدادها:\n\n"
+        for r in rows:
+            msg += f"{r[1]} | {r[2]}\n"
+
+        await q.message.reply_text(msg)
         return
-    
-    # ANSWER
-    if d in ["A","B","C"]:
-        if uid in answered or uid not in quiz_cache:
+
+    # -------- QUIZ --------
+    if data == "quiz":
+        cur.execute("SELECT * FROM quizzes ORDER BY RANDOM() LIMIT 1")
+        qz = cur.fetchone()
+
+        if not qz:
+            await q.message.reply_text("❌ آزمون نیست")
+            return
+
+        quiz_cache[uid] = qz
+
+        kb = [[
+            InlineKeyboardButton("A", callback_data="A"),
+            InlineKeyboardButton("B", callback_data="B"),
+            InlineKeyboardButton("C", callback_data="C")
+        ]]
+
+        await q.message.reply_text(
+            f"""🧪 {qz[1]}
+
+A) {qz[2]}
+B) {qz[3]}
+C) {qz[4]}
+
+⏱ 60 ثانیه فرصت""",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+    # -------- ANSWER --------
+    if data in ["A", "B", "C"]:
+        if uid not in quiz_cache:
             return
 
         qz = quiz_cache[uid]
-        correct = qz[5]
 
-        cur.execute("INSERT OR IGNORE INTO results VALUES (?,?,?)", (uid,0,0))
-        cur.execute("UPDATE results SET total=total+1 WHERE user_id=?", (uid,))
+        if data == qz[5]:
+            await q.message.reply_text("✅ درست")
+        else:
+            await q.message.reply_text(f"❌ غلط | جواب: {qz[5]}")
 
-        if d == correct:
-            cur.execute("UPDATE results SET score=score+1 WHERE user_id=?", (uid,))
-
-        conn.commit()
-
-        answered.add(uid)
-        quiz_cache.pop(uid, None)
-
-        await q.message.reply_text(f"✅ ثبت شد | جواب: {correct}")
+        quiz_cache.pop(uid)
         return
+# ================= MAIN =================
+def main():
+    init_db()
+    seed()
 
-    # REQUEST
-    if d == "req":
-        cur.execute("INSERT INTO requests VALUES (NULL, ?, '', 'pending')", (uid,))
-        conn.commit()
-        await q.message.reply_text("✍️ پیام خود را بنویس")
-        return
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    # RANK
-    if d == "rank":
-        cur.execute("SELECT user_id, score FROM results ORDER BY score DESC LIMIT 10")
-        rows = cur.fetchall()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(cb))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))
 
-        t = "🏆 رتبه‌بندی:\n\n"
-        for i,r in enumerate(rows,1):
-            t += f"{i}) {r[0]} - {r[1]}\n"
+    print("🚀 BOT FIXED RUNNING")
+    app.run_polling()
 
-        await q.message.reply_text(t)
-        return
-
-    # ADMIN PANEL
-    if d == "admin" and uid == ADMIN_ID:
-        cur.execute("SELECT id FROM requests WHERE status='pending'")
-        rows = cur.fetchall()
-
-        kb = [[InlineKeyboardButton(f"📩 {r[0]}", callback_data=f"r_{r[0]}")] for r in rows]
-        kb.append([InlineKeyboardButton("⏱ تغییر زمان آزمون", callback_data="set_time")])
-
-        await q.message.reply_text("🛠 پنل مدیریت", reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    # SET TIME
-    if d == "set_time":
-        state[uid] = "set_time"
-        await q.message.reply_text("⏱ زمان جدید (ثانیه):")
-        return
-
-    # REPLY REQUEST
-    if d.startswith("r_"):
-        admin_buffer[uid] = int(d.split("_")[1])
-        await q.message.reply_text("✍️ پاسخ را بنویس")
-
-# ---------------- APP ----------------
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(cb))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))
-
-print("🚀 INDUSTRIAL BOT RUNNING")
-app.run_polling()
+if __name__ == "__main__":
+    main()

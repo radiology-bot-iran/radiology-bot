@@ -1,9 +1,12 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from database import conn, cursor   # 👈 این باید بالا باشه
 
-TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
+from database import conn, cursor
 
+TOKEN = "YOUR_TOKEN_HERE"
+
+
+# ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
 
@@ -13,11 +16,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     conn.commit()
 
-    await update.message.reply_text("سلام 👋 به ربات انجمن علمی رادیولوژی خوش اومدی")
+    await update.message.reply_text(
+        "سلام 👋 به ربات انجمن علمی رادیولوژی خوش اومدی"
+    )
 
+
+# ---------------- EVENTS ----------------
+async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cursor.execute("SELECT * FROM events")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await update.message.reply_text("📭 فعلاً رویدادی وجود ندارد")
+        return
+
+    text = "📅 لیست رویدادها:\n\n"
+
+    for r in rows:
+        text += f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n\n"
+
+    await update.message.reply_text(text)
+
+
+# ---------------- APP ----------------
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("events", events))
 
 print("Bot is running...")
 app.run_polling()

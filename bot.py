@@ -1,26 +1,12 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
-)
-
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import sqlite3
 
 # ---------------- DATABASE ----------------
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    name TEXT
-)
-""")
-
+# اگر جدول events وجود ندارد
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,41 +16,15 @@ CREATE TABLE IF NOT EXISTS events (
 )
 """)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS registrations (
-    user_id INTEGER,
-    event_id INTEGER
-)
-""")
-
 conn.commit()
 
 # ---------------- CONFIG ----------------
 TOKEN = "8723545702:AAGF2-dS6_WXIxXJjf83bjkNI2HSV_TbP88"
 ADMIN_ID = 8947941966
 
-admin_state = {}
-edit_state = {}
-
-# ---------------- ADMIN CHECK ----------------
-def is_admin(user_id: int):
-    return user_id == ADMIN_ID
-
-
 # ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-
-    cursor.execute(
-        "INSERT OR IGNORE INTO users (user_id, name) VALUES (?, ?)",
-        (user.id, user.first_name)
-    )
-    conn.commit()
-
-    await update.message.reply_text(
-        "سلام 👋 به ربات انجمن علمی رادیولوژی خوش اومدی"
-    )
-
+    await update.message.reply_text("سلام 👋 ربات فعال شد")
 
 # ---------------- EVENTS ----------------
 async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,81 +32,22 @@ async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = cursor.fetchall()
 
     if not rows:
-        await update.message.reply_text("📭 فعلاً رویدادی وجود ندارد")
+        await update.message.reply_text("📭 هیچ رویدادی وجود ندارد")
         return
 
+    text = "📅 رویدادها:\n\n"
+
     for r in rows:
-        event_id = r[0]
+        text += f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n\n"
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM registrations WHERE event_id=?",
-            (event_id,)
-        )
-        count = cursor.fetchone()[0]
+    await update.message.reply_text(text)
 
-        keyboard = [
-            [
-                InlineKeyboardButton("🟢 ثبت‌نام", callback_data=f"reg_{event_id}"),
-                InlineKeyboardButton("👥 شرکت‌کنندگان", callback_data=f"list_{event_id}")
-            ]
-        ]
+# ---------------- MAIN APP ----------------
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-        if is_admin(update.effective_user.id):
-            keyboard.append([
-                InlineKeyboardButton("✏️ ویرایش", callback_data=f"edit_{event_id}"),
-                InlineKeyboardButton("🗑 حذف", callback_data=f"del_{event_id}")
-            ])
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("events", events))
 
-        await update.message.reply_text(
-            f"🎓 {r[1]}\n📆 {r[2]}\n👥 ظرفیت: {r[3]}\n👤 ثبت‌نام شده: {count}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-
-# ---------------- CALLBACKS ----------------
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    user_id = query.from_user.id
-
-    # ---------------- REGISTER ----------------
-    if data.startswith("reg_"):
-        event_id = int(data.split("_")[1])
-
-        cursor.execute(
-            "SELECT * FROM registrations WHERE user_id=? AND event_id=?",
-            (user_id, event_id)
-        )
-        if cursor.fetchone():
-            await query.answer("قبلاً ثبت‌نام کردی ❗", show_alert=True)
-            return
-
-        cursor.execute("SELECT capacity FROM events WHERE id=?", (event_id,))
-        cap_row = cursor.fetchone()
-        if not cap_row:
-            return
-        cap = cap_row[0]
-
-        cursor.execute(
-            "SELECT COUNT(*) FROM registrations WHERE event_id=?",
-            (event_id,)
-        )
-        count = cursor.fetchone()[0]
-
-        if count >= cap:
-            await query.answer("ظرفیت تکمیل است ❌", show_alert=True)
-            return
-
-        cursor.execute(
-            "INSERT INTO registrations (user_id, event_id) VALUES (?, ?)",
-            (user_id, event_id)
-        )
-        conn.commit()
-
-        await query.answer("ثبت شد ✅", show_alert=True)
-
-    # ---------------- LIST ----------------
-    elif data.startswith("list_"):
-        event_id = int(data.split("_")[1])
+    print("Bot is running...")
+    app.run_polling()

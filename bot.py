@@ -3,7 +3,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from database import conn, cursor
 
-TOKEN = "YOUR_TOKEN_HERE"
+TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
 
 
 # ---------------- START ----------------

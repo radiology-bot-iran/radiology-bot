@@ -1,16 +1,18 @@
 import sqlite3
 
+# دیتابیس اصلی پروژه
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
+# ---------------- USERS TABLE ----------------
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
+    user_id INTEGER PRIMARY KEY,
     name TEXT
 )
 """)
 
+# ---------------- EVENTS TABLE ----------------
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,6 +22,7 @@ CREATE TABLE IF NOT EXISTS events (
 )
 """)
 
+# ---------------- REGISTRATIONS TABLE ----------------
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS registrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,3 +32,5 @@ CREATE TABLE IF NOT EXISTS registrations (
 """)
 
 conn.commit()
+
+print("Database initialized ✔")

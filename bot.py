@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS registrations (
 conn.commit()
 
 # ---------------- CONFIG ----------------
-TOKEN = "8723545702:AAFDjnjIj3-ZQ79X0y_5E4YHLtVXdqtA-SI"
+TOKEN = "8723545702:AAGF2-dS6_WXIxXJjf83bjkNI2HSV_TbP88"
 ADMIN_ID = 8947941966
 
 admin_state = {}
